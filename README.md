@@ -4,7 +4,7 @@ This project provides a FastAPI-based solution for comparing documents, supporti
 
 ## Features
 
-- **FastAPI Framework**: Built on top of FastAPI, a modern, fast (high-performance), web framework for building APIs with Python 3.7+.
+- **FastAPI Framework**: Built on top of FastAPI, a modern, fast (high-performance), web framework for building APIs with Python 3.12+.
 - **Document Comparison**: Enables users to upload Excel and Image documents for comparison.
 - **Difference Detection**: Identifies and highlights the differences between uploaded documents.
 - **User-friendly API**: Simple and intuitive API endpoints for document upload and comparison.
