@@ -98,8 +98,11 @@ class ImageDocumentComparator:
             image1 = cv2.imread(image1_path)
             image2 = cv2.imread(image2_path)
 
-            # Resize Image 2 to match the dimensions of Image 1
-            image2_resized = cv2.resize(image2, (image1.shape[1], image1.shape[0]))
+            #  Resize Image 2 only if its size doesn't match Image 1
+            if image1.shape[:2] != image2.shape[:2]:
+                image2_resized = cv2.resize(image2, (image1.shape[1], image1.shape[0]))
+            else:
+                image2_resized = image2
 
             # Convert images to grayscale
             gray1 = cv2.cvtColor(image1, cv2.COLOR_BGR2GRAY)
