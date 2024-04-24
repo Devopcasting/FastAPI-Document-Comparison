@@ -47,10 +47,9 @@ class ExcelDocumentProperties:
                 'file2_properties': file2_properties
             }
         except Exception as e:
-            # Handle any errors that might occur during reading
             raise HTTPException(status_code=500, detail=f"Error reading Excel files: {str(e)}")
 
-@router.get("/excel_properties")
+@router.post("/excel_properties")
 async def properties(file_paths: ExcelFileRequest):
     exceldocproperties = ExcelDocumentProperties(file_paths)
 

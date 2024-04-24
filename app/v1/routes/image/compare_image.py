@@ -9,16 +9,15 @@ from pydantic import BaseModel
 from urllib.parse import unquote
 from jinja2 import Template
 
-
 router = APIRouter()
 IMAGE_WORKSPACE = os.path.abspath(os.path.join("app", "v1", "static", "image"))
+
 BASE_URL = "http://localhost:8030/"
 
 class ImageFileRequest(BaseModel):
     file1_path: str
     file2_path: str
     session_id: str
-
 
 class ImageDocumentComparator:
     def __init__(self, file_paths) -> None:
@@ -292,7 +291,7 @@ class HtmlGenerator:
             html_file.write(render_html)
 
 
-@router.get("/compare_image")
+@router.post("/compare_image")
 async def generate_url(file_paths: ImageFileRequest, background_tasks: BackgroundTasks):
     comparator = ImageDocumentComparator(file_paths)
 

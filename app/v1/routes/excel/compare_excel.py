@@ -20,6 +20,14 @@ class ExcelFileRequest(BaseModel):
     file2_path: str
     file2_sheet_name: str
     session_id: str
+    wm_txt_message: str
+    wm_img_url: str
+    wm_position: str
+    wm_txt_fontsize: str
+    wm_img_height: str
+    wm_img_width: str
+    wm_opacity: str
+    wm_rotation: str
 
 class ExcelDocumentComparator:
     def __init__(self, file_paths) -> None:
@@ -71,28 +79,6 @@ class ExcelDocumentComparator:
         if not os.path.exists(session_folder):
             await aiofiles.os.makedirs(session_folder)
             
-    async def copy_document_to_session_workspace(self):
-        try:
-            SESSION_PATH = os.path.join(EXCEL_WORKSPACE, self.session_id)
-            FILE_1_WORKSPACE = os.path.join(SESSION_PATH, self.file_1_version)
-            FILE_2_WORKSPACE = os.path.join(SESSION_PATH, self.file_2_version)
-
-            # Create directories asynchronously
-            await aiofiles.os.makedirs(FILE_1_WORKSPACE)
-            await aiofiles.os.makedirs(FILE_2_WORKSPACE)
-
-            # Copy files asynchronously
-            async with aiofiles.open(self.file_1_path, 'rb') as f1:
-                async with aiofiles.open(os.path.join(FILE_1_WORKSPACE, os.path.basename(self.file_1_path)), 'wb') as f1_new:
-                    await f1_new.write(await f1.read())
-
-            async with aiofiles.open(self.file_2_path, 'rb') as f2:
-                async with aiofiles.open(os.path.join(FILE_2_WORKSPACE, os.path.basename(self.file_2_path)), 'wb') as f2_new:
-                    await f2_new.write(await f2.read())
-            return True
-        except Exception as e:
-            return False
-
     async def process_document(self) -> dict:
         """Panda: Create DataFrame object"""
         df1 = pd.read_excel(self.file_1_path, sheet_name=self.file1_sheet_name, header=None)
@@ -477,7 +463,7 @@ class HtmlGenerator:
         with open(f"{session_path}/comparison_result.html", "w") as html_file:
             html_file.write(render_html)
 
-@router.get("/compare_excel")
+@router.post("/compare_excel")
 async def generate_url(file_paths: ExcelFileRequest, background_tasks: BackgroundTasks):
     comparator = ExcelDocumentComparator(file_paths)
     
@@ -487,9 +473,6 @@ async def generate_url(file_paths: ExcelFileRequest, background_tasks: Backgroun
     """Create Session workspace"""
     await comparator.create_workspace()
 
-    """Copy the documents to session workspace"""
-    #await comparator.copy_document_to_session_workspace()
-    
     """Process Document"""
     comparision_response = await comparator.process_document()
     
@@ -502,11 +485,6 @@ async def generate_url(file_paths: ExcelFileRequest, background_tasks: Backgroun
                                 comparator.file2_sheet_name, comparator.file_1_version,
                                 comparator.file_2_version, comparision_response['differing_indices'], 
                                 comparision_response['different_values_df2'] )
-    
-    # generate_html.generate_result_html(SESSION_PATH, comparision_response['data1'], comparision_response['data2'], "Contentverse Excel Document Comparision",
-    #                                    comparator.file_1_name, comparator.file_2_name, comparator.file1_sheet_name,
-    #                                    comparator.file2_sheet_name, comparator.file_1_version,
-    #                                    comparator.file_2_version, comparision_response['differing_indices'], comparision_response['different_values_df2'])
 
     comparision_result_url = f"{BASE_URL}static/excel/{comparator.session_id}/comparison_result.html"
 
