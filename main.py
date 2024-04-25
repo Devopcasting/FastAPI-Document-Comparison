@@ -2,6 +2,7 @@ from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+import multiprocessing
 
 from app.v1.routes.excel.compare_excel import router as excel_doc_endpoint
 from app.v1.routes.excel.properties import router as excel_doc_properties
@@ -27,4 +28,6 @@ app.include_router(image_doc_endpoint, prefix="/v1")
 app.include_router(cleanup_session, prefix="/v1")
 
 if __name__ == '__main__':
-    uvicorn.run("main:app", host="0.0.0.0", port=8030, reload=True, workers=2)
+    num_cores = multiprocessing.cpu_count()
+    num_workers = 2 if num_cores <= 2 else num_cores * 2 + 1
+    uvicorn.run("main:app", host="0.0.0.0", port=8030, workers=num_workers)
