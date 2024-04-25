@@ -7,11 +7,11 @@ from urllib.parse import unquote
 from jinja2 import Template
 import shutil
 from app.log_mgmt.docom_log_config import DOCCOMLogging
+from time import sleep
 
 router = APIRouter()
 logger = DOCCOMLogging().configure_logger()
 IMAGE_WORKSPACE = os.path.abspath(os.path.join("app", "v1", "static", "image"))
-
 BASE_URL = "http://localhost:8030/"
 
 class ImageFileRequest(BaseModel):
@@ -288,13 +288,14 @@ class HtmlGenerator:
 
             html_file_path = f"{session_path}/comparison_result.html"
             if os.path.exists(html_file_path):
-                os.remove(html_file_path)
+                #os.remove(html_file_path)
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
                     html_file.write(render_html)
             else:
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
                     html_file.write(render_html)
         
+            sleep(5)
             """Copy the HTML to CVWeb"""
             destination_path_list = self.comparator_instance.file_1_path.split('\\')
             destination_path_List = self.comparator_instance.file_1_path.split('\\')[:-2]
