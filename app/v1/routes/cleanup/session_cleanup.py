@@ -1,8 +1,7 @@
 import os
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
-from pathlib import Path
 import shutil
 
 router = APIRouter()
@@ -14,7 +13,7 @@ class SessionID(BaseModel):
     session_id: str
 
 @router.post("/clean_session")
-async def cleanup(sessionid: SessionID):
+def cleanup(sessionid: SessionID):
     sessionId = sessionid.session_id
     image_sesssion_id_path = os.path.join(IMAGE_WORKSPACE, sessionId)
     excel_session_id_path = os.path.join(EXCEL_WORKSPACE, sessionId)

@@ -4,8 +4,10 @@ from pydantic import BaseModel
 from urllib.parse import unquote
 import pandas as pd
 import os
+from app.log_mgmt.docom_log_config import DOCCOMLogging
 
 router = APIRouter()
+logger = DOCCOMLogging().configure_logger()
 
 class ExcelFileRequest(BaseModel):
     file1_path: str
@@ -16,14 +18,16 @@ class ExcelDocumentProperties:
         self.file_1_path = unquote(r'' + file_paths.file1_path)
         self.file_2_path = unquote(r'' + file_paths.file2_path)
 
-    async def validate_excel_document(self):
+    def validate_excel_document(self):
         """Check if the document exists"""
         if not os.path.isfile(self.file_1_path.replace("%20", " ")):
+            logger.error(f"| {self.file_1_path} not found")
             raise HTTPException(status_code=404, detail=f"{self.file_1_path} not found.")
         if not os.path.isfile(self.file_2_path.replace("%20", " ")):
+            logger.error(f"| {self.file_2_path} not found")
             raise HTTPException(status_code=404, detail=f"{self.file_2_path} not found.")
     
-    async def get_excel_doc_properties(self):
+    def get_excel_doc_properties(self):
         """Get properties of Excel documents"""
         try:
             # Read the Excel files using pandas
@@ -47,16 +51,20 @@ class ExcelDocumentProperties:
                 'file2_properties': file2_properties
             }
         except Exception as e:
+            logger.error(f"| Error reading Excel files: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error reading Excel files: {str(e)}")
 
 @router.post("/excel_properties")
-async def properties(file_paths: ExcelFileRequest):
+def properties(file_paths: ExcelFileRequest):
+    logger.info("| POST request to Excel document properties")
     exceldocproperties = ExcelDocumentProperties(file_paths)
 
     """Validate Document"""
-    await exceldocproperties.validate_excel_document()
+    logger.info("| Validating Excel Documents")
+    exceldocproperties.validate_excel_document()
 
     """Get the Properties"""
-    properties = await exceldocproperties.get_excel_doc_properties()
+    logger.info("| Get Excel Document properties")
+    properties = exceldocproperties.get_excel_doc_properties()
 
     return JSONResponse(content=properties)

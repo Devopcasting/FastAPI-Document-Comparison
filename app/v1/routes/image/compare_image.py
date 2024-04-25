@@ -1,15 +1,15 @@
 import os
 import cv2
-import aiofiles
-import aiofiles.os
-import asyncio
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from urllib.parse import unquote
 from jinja2 import Template
+import shutil
+from app.log_mgmt.docom_log_config import DOCCOMLogging
 
 router = APIRouter()
+logger = DOCCOMLogging().configure_logger()
 IMAGE_WORKSPACE = os.path.abspath(os.path.join("app", "v1", "static", "image"))
 
 BASE_URL = "http://localhost:8030/"
@@ -34,19 +34,21 @@ class ImageDocumentComparator:
 
         self.session_id = file_paths.session_id
 
-    async def validate_image_document(self):
+    def validate_image_document(self):
         """Check if the image path exists"""
         if not os.path.isfile(self.file_1_path.replace("%20", " ")):
+            logger.error(f"| {self.file_1_path} not found")
             raise HTTPException(status_code=404, detail=f"{self.file_1_path} not found.")
         if not os.path.isfile(self.file_2_path.replace("%20", " ")):
+            logger.error(f"| {self.file_2_path} not found")
             raise HTTPException(status_code=404, detail=f"{self.file_2_path} not found.")
         
-    async def create_workspace(self):
+    def create_workspace(self):
         session_folder = os.path.join(IMAGE_WORKSPACE, self.session_id)
         if not os.path.exists(session_folder):
-            await aiofiles.os.makedirs(session_folder)
+            os.makedirs(session_folder)
     
-    async def copy_document_to_session_workspace(self):
+    def copy_document_to_session_workspace(self):
         try:
             SESSION_PATH = os.path.join(IMAGE_WORKSPACE, self.session_id)
             FILE_1_WORKSPACE = os.path.join(SESSION_PATH, self.file_1_version)
@@ -54,20 +56,15 @@ class ImageDocumentComparator:
             
             # Create directories asynchronously
             if not os.path.exists(FILE_1_WORKSPACE):
-                await aiofiles.os.makedirs(FILE_1_WORKSPACE)
+                os.makedirs(FILE_1_WORKSPACE)
             if not os.path.exists(FILE_2_WORKSPACE):
-                await aiofiles.os.makedirs(FILE_2_WORKSPACE)
+                os.makedirs(FILE_2_WORKSPACE)
 
             
             # Copy files asynchronously
-            async with aiofiles.open(self.file_1_path, 'rb') as f1:
-                async with aiofiles.open(os.path.join(FILE_1_WORKSPACE, os.path.basename(self.file_1_path)), 'wb') as f1_new:
-                    await f1_new.write(await f1.read())
+            shutil.copy(self.file_1_path, FILE_1_WORKSPACE)
+            shutil.copy(self.file_2_path, FILE_2_WORKSPACE)
 
-            async with aiofiles.open(self.file_2_path, 'rb') as f2:
-                async with aiofiles.open(os.path.join(FILE_2_WORKSPACE, os.path.basename(self.file_2_path)), 'wb') as f2_new:
-                    await f2_new.write(await f2.read())
-            
             data = [ {
                         "file1": {
                             "file1_name": self.file_1_name,
@@ -85,9 +82,10 @@ class ImageDocumentComparator:
             ]
             return data
         except Exception as e:
+            logger.error(f"| Copying images to workspace: {e}")
             return False
 
-    async def process_image(self):
+    def process_image(self):
         try:
             SESSION_PATH = os.path.join(IMAGE_WORKSPACE, self.session_id)
             image1_path = os.path.join(SESSION_PATH, self.file_1_version, self.file_1_name)
@@ -124,17 +122,16 @@ class ImageDocumentComparator:
             cv2.imwrite(image2_path, image2_resized)
             return True 
         except Exception as e:
+            logger.error(f"| Docuemnt Pre-Processing failed: {e}")
             return False
 
 
 class HtmlGenerator:
-    @staticmethod
-    async def generate_result_html_async(session_path, file1, file2, file_1_version, file_2_version, file_1_static_path, file_2_static_path):
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(None, HtmlGenerator.generate_result_html, session_path, file1, file2, file_1_version, file_2_version, file_1_static_path, file_2_static_path)
 
-    @staticmethod
-    def generate_result_html(session_path, file1, file2, file_1_version, file_2_version, file_1_static_path, file_2_static_path):
+    def __init__(self, comparator_instance) -> None:
+        self.comparator_instance = comparator_instance
+
+    def generate_result_html(self, session_path, file1, file2, file_1_version, file_2_version, file_1_static_path, file_2_static_path):
         html_template_str = '''<!DOCTYPE html>
         <html>
             <head>
@@ -278,46 +275,74 @@ class HtmlGenerator:
         </html>'''
 
         """Render HTML Template"""
-        template = Template(html_template_str)
-        render_html = template.render(
-            file1 = file1,
-            file2 = file2,
-            file_1_version = file_1_version,
-            file_2_version = file_2_version,
-            file_1_static_path = file_1_static_path,
-            file_2_static_path = file_2_static_path
-        )
-        with open(f"{session_path}/comparison_result.html", "w") as html_file:
-            html_file.write(render_html)
+        try:
+            template = Template(html_template_str)
+            render_html = template.render(
+                file1 = file1,
+                file2 = file2,
+                file_1_version = file_1_version,
+                file_2_version = file_2_version,
+                file_1_static_path = file_1_static_path,
+                file_2_static_path = file_2_static_path
+            )
 
-
+            html_file_path = f"{session_path}/comparison_result.html"
+            if os.path.exists(html_file_path):
+                os.remove(html_file_path)
+                with open(f"{session_path}/comparison_result.html", "w") as html_file:
+                    html_file.write(render_html)
+            else:
+                with open(f"{session_path}/comparison_result.html", "w") as html_file:
+                    html_file.write(render_html)
+        
+            """Copy the HTML to CVWeb"""
+            destination_path_list = self.comparator_instance.file_1_path.split('\\')
+            destination_path_List = self.comparator_instance.file_1_path.split('\\')[:-2]
+            destination_path = '\\'.join(destination_path_List)
+            shutil.copy(html_file_path, destination_path)
+            cvweb_index = destination_path_list.index('CVWeb')
+            cvweb_string = '//'.join(destination_path_list[cvweb_index:-2])
+            return cvweb_string+"//comparison_result.html"
+        except Exception as e:
+            logger.error(f"| Generating result HTML failed: {e}")
+            return False
+    
 @router.post("/compare_image")
-async def generate_url(file_paths: ImageFileRequest, background_tasks: BackgroundTasks):
+def generate_url(file_paths: ImageFileRequest):
+    logger.info("| POST request to Image Document Comparison")
     comparator = ImageDocumentComparator(file_paths)
 
     """Validate document"""
-    await comparator.validate_image_document()
+    logger.info("| Validating Images")
+    comparator.validate_image_document()
 
     """Create Session Workspace"""
-    await comparator.create_workspace()
+    logger.info("| Creating workspace for Excel document comparison")
+    comparator.create_workspace()
 
     """Copy images to session workspace"""
-    copied_image = await comparator.copy_document_to_session_workspace()
+    logger.info("| Copying image to session workspace")
+    copied_image = comparator.copy_document_to_session_workspace()
     if not copied_image:
         raise HTTPException(status_code=422, detail=f"Error while copying image")
     
-    if not await comparator.process_image():
+    """Process Image"""
+    logger.info("| Start processing image")
+    if not comparator.process_image():
         raise HTTPException(status_code=422, detail=f"Error while comparing images")
 
 
     """Generate HTML"""
+    logger.info("| Generating Result HTML for Image document")
     SESSION_PATH = os.path.join(IMAGE_WORKSPACE, comparator.session_id)
-    generate_html = HtmlGenerator()
-    background_tasks.add_task(generate_html.generate_result_html_async, SESSION_PATH,
+    generate_html = HtmlGenerator(comparator)
+    result = generate_html.generate_result_html(SESSION_PATH,
                               copied_image[0]['file1']['file1_name'], copied_image[1]['file2']['file2_name'],
                               copied_image[0]['file1']['file1_version'], copied_image[1]['file2']['file2_version'],
                               copied_image[0]['file1']['file1_static_path'], copied_image[1]['file2']['file2_static_path']
                               )
-    comparision_result_url = f"{BASE_URL}static/image/{comparator.session_id}/comparison_result.html"
+    if not result:
+        raise HTTPException(status_code=422, detail=f"Error generating HTML")
+    comparision_result_url = f"{result}"
 
     return JSONResponse(content=({"session_id": comparator.session_id, "result": comparision_result_url}))
