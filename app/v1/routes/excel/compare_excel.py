@@ -478,7 +478,6 @@ class HtmlGenerator:
             else:
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
                     html_file.write(render_html)
-        
             sleep(5)
             """Copy the HTML to CVWeb"""
             destination_path_list = self.comparator_instance.file_1_path.split('\\')
@@ -526,6 +525,10 @@ def generate_url(file_paths: ExcelFileRequest):
     if not result:
         raise HTTPException(status_code=422, detail=f"Error generating HTML")
     comparision_result_url = f"{result}"
+
+    """Cleanup session Workspace"""
+    SESSION_PATH = os.path.join(EXCEL_WORKSPACE, comparator.session_id)
+    shutil.rmtree(SESSION_PATH)
 
     return JSONResponse(content={"session_id": comparator.session_id, "result": comparision_result_url})
         
