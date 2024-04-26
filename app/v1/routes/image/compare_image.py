@@ -1,4 +1,5 @@
 import os
+import uuid
 import cv2
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -6,8 +7,8 @@ from pydantic import BaseModel
 from urllib.parse import unquote
 from jinja2 import Template
 import shutil
+from fastapi.staticfiles import StaticFiles
 from app.log_mgmt.docom_log_config import DOCCOMLogging
-from time import sleep
 
 router = APIRouter()
 logger = DOCCOMLogging().configure_logger()
@@ -120,7 +121,18 @@ class ImageDocumentComparator:
                 cv2.rectangle(image2_resized, (x, y), (x+w, y+h), (0, 0, 255), 2)
             
             cv2.imwrite(image2_path, image2_resized)
-            return True 
+
+            """Copy the result images to CVWeb with renamed"""
+            image_extention = os.path.splitext(self.file_1_path)[1:][0]
+            unique_id_image_1 = uuid.uuid4()
+            unique_id_image_1_str = f"{str(unique_id_image_1)}{image_extention}"
+            unique_id_image_2 = uuid.uuid4()
+            unique_id_image_2_str = f"{str(unique_id_image_2)}{image_extention}"
+
+            shutil.copy(image1_path, f"{'//'.join(self.file_1_path.split('\\')[:-2])}//{unique_id_image_1_str}")
+            shutil.copy(image2_path, f"{'//'.join(self.file_1_path.split('\\')[:-2])}//{unique_id_image_2_str}")
+
+            return {"file_1":unique_id_image_1_str, "file_2":unique_id_image_2_str}
         except Exception as e:
             logger.error(f"| Docuemnt Pre-Processing failed: {e}")
             return False
@@ -288,14 +300,13 @@ class HtmlGenerator:
 
             html_file_path = f"{session_path}/comparison_result.html"
             if os.path.exists(html_file_path):
-                #os.remove(html_file_path)
+                os.remove(html_file_path)
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
                     html_file.write(render_html)
             else:
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
                     html_file.write(render_html)
         
-            sleep(5)
             """Copy the HTML to CVWeb"""
             destination_path_list = self.comparator_instance.file_1_path.split('\\')
             destination_path_List = self.comparator_instance.file_1_path.split('\\')[:-2]
@@ -329,9 +340,9 @@ def generate_url(file_paths: ImageFileRequest):
     
     """Process Image"""
     logger.info("| Start processing image")
-    if not comparator.process_image():
+    compare_image_result = comparator.process_image()
+    if not compare_image_result:
         raise HTTPException(status_code=422, detail=f"Error while comparing images")
-
 
     """Generate HTML"""
     logger.info("| Generating Result HTML for Image document")
@@ -340,10 +351,14 @@ def generate_url(file_paths: ImageFileRequest):
     result = generate_html.generate_result_html(SESSION_PATH,
                               copied_image[0]['file1']['file1_name'], copied_image[1]['file2']['file2_name'],
                               copied_image[0]['file1']['file1_version'], copied_image[1]['file2']['file2_version'],
-                              copied_image[0]['file1']['file1_static_path'], copied_image[1]['file2']['file2_static_path']
+                              compare_image_result['file_1'], compare_image_result['file_2']
                               )
     if not result:
         raise HTTPException(status_code=422, detail=f"Error generating HTML")
     comparision_result_url = f"{result}"
 
+    """Cleanup session Workspace"""
+    SESSION_PATH = os.path.join(IMAGE_WORKSPACE, comparator.session_id)
+    shutil.rmtree(SESSION_PATH)
+    
     return JSONResponse(content=({"session_id": comparator.session_id, "result": comparision_result_url}))
