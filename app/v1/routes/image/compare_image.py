@@ -9,6 +9,7 @@ from jinja2 import Template
 import shutil
 from fastapi.staticfiles import StaticFiles
 from app.log_mgmt.docom_log_config import DOCCOMLogging
+from time import sleep
 
 router = APIRouter()
 logger = DOCCOMLogging().configure_logger()
@@ -307,6 +308,7 @@ class HtmlGenerator:
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
                     html_file.write(render_html)
         
+            sleep(5)
             """Copy the HTML to CVWeb"""
             destination_path_list = self.comparator_instance.file_1_path.split('\\')
             destination_path_List = self.comparator_instance.file_1_path.split('\\')[:-2]
@@ -329,7 +331,7 @@ def generate_url(file_paths: ImageFileRequest):
     comparator.validate_image_document()
 
     """Create Session Workspace"""
-    logger.info("| Creating workspace for Excel document comparison")
+    logger.info("| Creating workspace for Image document comparison")
     comparator.create_workspace()
 
     """Copy images to session workspace"""
