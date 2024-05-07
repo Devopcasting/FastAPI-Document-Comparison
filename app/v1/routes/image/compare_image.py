@@ -70,7 +70,7 @@ class ImageDocumentComparator:
             data = [ {
                         "file1": {
                             "file1_name": self.file_1_name,
-                            "file1_version": self.file_2_version,
+                            "file1_version": self.file_1_version,
                             "file1_static_path": f"/static/image/{self.session_id}/{self.file_1_version}/{self.file_1_name}"
                         }
                     },
