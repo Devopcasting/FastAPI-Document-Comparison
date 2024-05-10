@@ -83,8 +83,10 @@ class ExcelDocumentComparator:
 
     def create_workspace(self):
         session_folder = os.path.join(EXCEL_WORKSPACE, self.session_id)
-        if not os.path.exists(session_folder):
+        if os.path.exists(session_folder):
+            shutil.rmtree(session_folder,ignore_errors=True)
             os.makedirs(session_folder,exist_ok=True)
+        os.makedirs(session_folder, exist_ok=True)
             
     def process_document(self) -> dict:
         try:
@@ -472,13 +474,13 @@ class HtmlGenerator:
 
             html_file_path = f"{session_path}/comparison_result.html"
             if os.path.exists(html_file_path):
-                #os.remove(html_file_path)
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
                     html_file.write(render_html)
             else:
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
                     html_file.write(render_html)
             sleep(5)
+            
             """Copy the HTML to CVWeb"""
             destination_path_list = self.comparator_instance.file_1_path.split('\\')
             destination_path_List = self.comparator_instance.file_1_path.split('\\')[:-2]
@@ -486,6 +488,12 @@ class HtmlGenerator:
             shutil.copy(html_file_path, destination_path)
             cvweb_index = destination_path_list.index('CVWeb')
             cvweb_string = '//'.join(destination_path_list[cvweb_index:-2])
+            sleep(2)
+
+            """Cleanup session Workspace"""
+            SESSION_PATH = os.path.join(EXCEL_WORKSPACE, self.comparator_instance.session_id)
+            shutil.rmtree(SESSION_PATH)
+
             return cvweb_string+"//comparison_result.html"
         except Exception as e:
             logger.error(f"| Generating result HTML failed: {e}")
@@ -525,10 +533,6 @@ def generate_url(file_paths: ExcelFileRequest):
     if not result:
         raise HTTPException(status_code=422, detail=f"Error generating HTML")
     comparision_result_url = f"{result}"
-
-    """Cleanup session Workspace"""
-    SESSION_PATH = os.path.join(EXCEL_WORKSPACE, comparator.session_id)
-    shutil.rmtree(SESSION_PATH)
-
+    logger.info(f"| Result URL: {comparision_result_url}")
     return JSONResponse(content={"session_id": comparator.session_id, "result": comparision_result_url})
         
