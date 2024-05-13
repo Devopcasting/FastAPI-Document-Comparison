@@ -10,6 +10,7 @@ import shutil
 from fastapi.staticfiles import StaticFiles
 from app.log_mgmt.docom_log_config import DOCCOMLogging
 from time import sleep
+import numpy as np 
 
 router = APIRouter()
 logger = DOCCOMLogging().configure_logger()
@@ -116,11 +117,16 @@ class ImageDocumentComparator:
             # Find contours of differences
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            # Create a red box around the contours in image2
+            # Create a box around the contours in image2
+            red_color = (51, 87, 255)
+            green_color = (4, 210, 20)
             for contour in contours:
                 x, y, w, h = cv2.boundingRect(contour)
-                cv2.rectangle(image2_resized, (x, y), (x+w, y+h), (0, 0, 255), 2)
-            
+                # Create a green rectangle with opacity
+                opacity = 0.3
+                overlay = image2_resized.copy()
+                cv2.rectangle(overlay, (x, y), (x+w, y+h), (0, 255, 0), cv2.FILLED)
+                cv2.addWeighted(overlay, opacity, image2_resized, 1 - opacity, 0, image2_resized)
             cv2.imwrite(image2_path, image2_resized)
 
             """Copy the result images to CVWeb with renamed"""
