@@ -261,7 +261,7 @@ class HtmlGenerator:
                                             <div class="table table-responsive">
                                                 <!-- Load First Image -->
                                                 <img src="{{file_1_static_path}}" class="img-fluid" alt="{{file1}}"
-                                        style="height: 100vh; background-size: cover;">
+                                        style="height: 100%; width: 100%; background-size: cover;">
                                             </div>
                                         </div>
                                     </div>
@@ -279,7 +279,7 @@ class HtmlGenerator:
                                         <div class="table table-responsive">
                                             <!--Load Second Image-->
                                             <img src="{{file_2_static_path}}" class="img-fluid" alt="{{file2}}"
-                                        style="height: 100vh; background-size: cover;">
+                                        style="height: 100%; width: 100%; background-size: cover;">
                                         </div>
                                     </div>
                                 </div>
