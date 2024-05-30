@@ -1,6 +1,6 @@
 # FastAPI Document Comparison
 
-This project provides a FastAPI-based solution for comparing documents, supporting Excel and Image file types. It offers a straightforward API for document upload and comparison, allowing users to quickly identify differences between documents of the supported types.
+This project provides a FastAPI-based solution for comparing documents, supporting Excel, PDFs and Image file types. It offers a straightforward API for document upload and comparison, allowing users to quickly identify differences between documents of the supported types.
 
 ## Developer
 
