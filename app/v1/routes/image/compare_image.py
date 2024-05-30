@@ -7,24 +7,27 @@ from pydantic import BaseModel
 from urllib.parse import unquote
 from jinja2 import Template
 import shutil
-from fastapi.staticfiles import StaticFiles
+import configparser
 from app.log_mgmt.docom_log_config import DOCCOMLogging
 from time import sleep
 import numpy as np 
 
+# Initialize FastAPI router
 router = APIRouter()
-logger = DOCCOMLogging().configure_logger()
-IMAGE_WORKSPACE = os.path.abspath(os.path.join("app", "v1", "static", "image"))
-BASE_URL = "http://localhost:8030/"
 
+# Set the workspace directory for storing images
+IMAGE_WORKSPACE = os.path.abspath(os.path.join("app", "v1", "static", "image"))
+
+# Pydantic model for image file request
 class ImageFileRequest(BaseModel):
     file1_path: str
     file2_path: str
     session_id: str
 
+# Class for image document comparison
 class ImageDocumentComparator:
-    def __init__(self, file_paths) -> None:
-
+    def __init__(self, file_paths: ImageFileRequest, logger: DOCCOMLogging ) -> None:
+        # Decode and initialize file paths and session ID
         """First Image"""
         self.file_1_path = unquote(r'' + file_paths.file1_path)
         self.file_1_name = os.path.basename(self.file_1_path)
@@ -35,38 +38,44 @@ class ImageDocumentComparator:
         self.file_2_name = os.path.basename(self.file_2_path)
         self.file_2_version = self.file_2_path.split('\\')[-2]
 
+        self.logger = logger
         self.session_id = file_paths.session_id
 
     def validate_image_document(self):
-        """Check if the image path exists"""
+        # Validate if image files exist
         if not os.path.isfile(self.file_1_path.replace("%20", " ")):
-            logger.error(f"| {self.file_1_path} not found")
+            if self.logger:
+                self.logger.error(f"| Image not found: {self.file_1_path}")
             raise HTTPException(status_code=404, detail=f"{self.file_1_path} not found.")
         if not os.path.isfile(self.file_2_path.replace("%20", " ")):
-            logger.error(f"| {self.file_2_path} not found")
+            if self.logger:
+                self.logger.error(f"| Image not found: {self.file_2_path}")
             raise HTTPException(status_code=404, detail=f"{self.file_2_path} not found.")
         
     def create_workspace(self):
+        # Create workspace directory for the session if it doesn't exist
         session_folder = os.path.join(IMAGE_WORKSPACE, self.session_id)
-        if not os.path.exists(session_folder):
-            os.makedirs(session_folder)
+        os.makedirs(session_folder, exist_ok=True)
+        if self.logger:
+            self.logger.info(f"| Workspace created for session: {self.session_id}")
     
     def copy_document_to_session_workspace(self):
         try:
-            SESSION_PATH = os.path.join(IMAGE_WORKSPACE, self.session_id)
-            FILE_1_WORKSPACE = os.path.join(SESSION_PATH, self.file_1_version)
-            FILE_2_WORKSPACE = os.path.join(SESSION_PATH, self.file_2_version)
+            # Create directories for the image versions within the session workspace
+            session_path = os.path.join(IMAGE_WORKSPACE, self.session_id)
+            file_1_workspace = os.path.join(session_path, self.file_1_version)
+            file_2_workspace = os.path.join(session_path, self.file_2_version)
             
-            # Create directories asynchronously
-            if not os.path.exists(FILE_1_WORKSPACE):
-                os.makedirs(FILE_1_WORKSPACE)
-            if not os.path.exists(FILE_2_WORKSPACE):
-                os.makedirs(FILE_2_WORKSPACE)
+            # Create session workspace folder
+            os.makedirs(file_1_workspace, exist_ok=True)
+            os.makedirs(file_2_workspace, exist_ok=True)
+            
+            # Copy images to the session workspace
+            shutil.copy(self.file_1_path, file_1_workspace)
+            shutil.copy(self.file_2_path, file_2_workspace)
 
-            
-            # Copy files asynchronously
-            shutil.copy(self.file_1_path, FILE_1_WORKSPACE)
-            shutil.copy(self.file_2_path, FILE_2_WORKSPACE)
+            if self.logger:
+                self.logger.info(f"| Images copied to workspace for session: {self.session_id}")
 
             data = [ {
                         "file1": {
@@ -85,11 +94,13 @@ class ImageDocumentComparator:
             ]
             return data
         except Exception as e:
-            logger.error(f"| Copying images to workspace: {e}")
-            return False
+            if self.logger:
+                self.logger.error(f"| Error copying images to workspace: {e}")
+            raise HTTPException(status_code=500, detail="Error copying images to workspace")
 
     def process_image(self):
         try:
+            # Paths for images in the session workspace
             SESSION_PATH = os.path.join(IMAGE_WORKSPACE, self.session_id)
             image1_path = os.path.join(SESSION_PATH, self.file_1_version, self.file_1_name)
             image2_path = os.path.join(SESSION_PATH, self.file_2_version, self.file_2_name)
@@ -98,7 +109,7 @@ class ImageDocumentComparator:
             image1 = cv2.imread(image1_path)
             image2 = cv2.imread(image2_path)
 
-            #  Resize Image 2 only if its size doesn't match Image 1
+            # Resize image2 if dimensions do not match
             if image1.shape[:2] != image2.shape[:2]:
                 image2_resized = cv2.resize(image2, (image1.shape[1], image1.shape[0]))
             else:
@@ -117,32 +128,36 @@ class ImageDocumentComparator:
             # Find contours of differences
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
-            # Create a box around the contours in image2
-            red_color = (51, 87, 255)
-            green_color = (4, 210, 20)
+            # Draw bounding boxes around differences in image2
+            red_color = (51, 51, 255)
             for contour in contours:
                 x, y, w, h = cv2.boundingRect(contour)
                 # Create a green rectangle with opacity
                 opacity = 0.3
                 overlay = image2_resized.copy()
-                cv2.rectangle(overlay, (x, y), (x+w, y+h), (0, 255, 0), cv2.FILLED)
+                cv2.rectangle(overlay, (x, y), (x+w, y+h), red_color, cv2.FILLED)
                 cv2.addWeighted(overlay, opacity, image2_resized, 1 - opacity, 0, image2_resized)
             cv2.imwrite(image2_path, image2_resized)
 
-            """Copy the result images to CVWeb with renamed"""
+            # Generate unique IDs for the processed images
             image_extention = os.path.splitext(self.file_1_path)[1:][0]
             unique_id_image_1 = uuid.uuid4()
             unique_id_image_1_str = f"{str(unique_id_image_1)}{image_extention}"
             unique_id_image_2 = uuid.uuid4()
             unique_id_image_2_str = f"{str(unique_id_image_2)}{image_extention}"
 
+            # Copy processed images to base path
             shutil.copy(image1_path, f"{'//'.join(self.file_1_path.split('\\')[:-2])}//{unique_id_image_1_str}")
             shutil.copy(image2_path, f"{'//'.join(self.file_1_path.split('\\')[:-2])}//{unique_id_image_2_str}")
 
+            if self.logger:
+                self.logger.info(f"| Processed images for session: {self.session_id}")
+
             return {"file_1":unique_id_image_1_str, "file_2":unique_id_image_2_str}
         except Exception as e:
-            logger.error(f"| Docuemnt Pre-Processing failed: {e}")
-            return False
+            if self.logger:
+                self.logger.error(f"| Docuemnt Pre-Processing failed: {e}")
+            raise HTTPException(status_code=500, detail="Error processing images")
 
 
 class HtmlGenerator:
@@ -151,6 +166,7 @@ class HtmlGenerator:
         self.comparator_instance = comparator_instance
 
     def generate_result_html(self, session_path, file1, file2, file_1_version, file_2_version, file_1_static_path, file_2_static_path):
+        # HTML template for comparison result
         html_template_str = '''<!DOCTYPE html>
         <html>
             <head>
@@ -293,8 +309,8 @@ class HtmlGenerator:
             </body>
         </html>'''
 
-        """Render HTML Template"""
         try:
+            # Render the HTML template with the provided data
             template = Template(html_template_str)
             render_html = template.render(
                 file1 = file1,
@@ -305,6 +321,7 @@ class HtmlGenerator:
                 file_2_static_path = file_2_static_path
             )
 
+            # Save the rendered HTML to a file
             html_file_path = f"{session_path}/comparison_result.html"
             if os.path.exists(html_file_path):
                 os.remove(html_file_path)
@@ -313,9 +330,11 @@ class HtmlGenerator:
             else:
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
                     html_file.write(render_html)
-        
+
+            # Pause to ensure file operations are complete
             sleep(5)
-            """Copy the HTML to CVWeb"""
+
+            # Copy the HTML file to the CVWeb destination path
             destination_path_list = self.comparator_instance.file_1_path.split('\\')
             destination_path_List = self.comparator_instance.file_1_path.split('\\')[:-2]
             destination_path = '\\'.join(destination_path_List)
@@ -324,49 +343,76 @@ class HtmlGenerator:
             cvweb_string = '//'.join(destination_path_list[cvweb_index:-2])
             return cvweb_string+"//comparison_result.html"
         except Exception as e:
-            logger.error(f"| Generating result HTML failed: {e}")
-            return False
-    
+            if self.comparator_instance.logger:
+                self.comparator_instance.logger.error(f"| Generating result HTML failed: {e}")
+            raise HTTPException(status_code=500, detail="Error generating result HTML")
+        
+# FastAPI route for comparing images and generating the comparison URL   
 @router.post("/compare_image")
 def generate_url(file_paths: ImageFileRequest):
-    logger.info("| POST request to Image Document Comparison")
-    comparator = ImageDocumentComparator(file_paths)
-
-    """Validate document"""
-    logger.info("| Validating Images")
-    comparator.validate_image_document()
-
-    """Create Session Workspace"""
-    logger.info("| Creating workspace for Image document comparison")
-    comparator.create_workspace()
-
-    """Copy images to session workspace"""
-    logger.info("| Copying image to session workspace")
-    copied_image = comparator.copy_document_to_session_workspace()
-    if not copied_image:
-        raise HTTPException(status_code=422, detail=f"Error while copying image")
+    try:
+        # Read configuration from the configuration file
+        config = configparser.ConfigParser(allow_no_value=True)
+        configuration_file_path = os.path.abspath(os.path.join("config","configuration.ini"))
+        config.read(rf"{configuration_file_path}")
+        logging_enabled = config.get('Logging', 'logging_enabled')
     
-    """Process Image"""
-    logger.info("| Start processing image")
-    compare_image_result = comparator.process_image()
-    if not compare_image_result:
-        raise HTTPException(status_code=422, detail=f"Error while comparing images")
+        # Configure the logger if logging is enabled
+        if logging_enabled == "on":
+            logger = DOCCOMLogging().configure_logger()
+        else:
+            # Set logger to None if logging is disabled
+            logger = None
 
-    """Generate HTML"""
-    logger.info("| Generating Result HTML for Image document")
-    SESSION_PATH = os.path.join(IMAGE_WORKSPACE, comparator.session_id)
-    generate_html = HtmlGenerator(comparator)
-    result = generate_html.generate_result_html(SESSION_PATH,
-                              copied_image[0]['file1']['file1_name'], copied_image[1]['file2']['file2_name'],
-                              copied_image[0]['file1']['file1_version'], copied_image[1]['file2']['file2_version'],
-                              compare_image_result['file_1'], compare_image_result['file_2']
-                              )
-    if not result:
-        raise HTTPException(status_code=422, detail=f"Error generating HTML")
-    comparision_result_url = f"{result}"
+        if logger:
+            logger.info("| Received request for image document comparison")
+        comparator = ImageDocumentComparator(file_paths, logger)
 
-    """Cleanup session Workspace"""
-    SESSION_PATH = os.path.join(IMAGE_WORKSPACE, comparator.session_id)
-    shutil.rmtree(SESSION_PATH)
+        # Validate the provided images
+        if logger:
+            logger.info("| Validating Images")
+        comparator.validate_image_document()
+
+        # Create a workspace for the session
+        if logger:
+            logger.info("| Creating workspace for session")
+        comparator.create_workspace()
+
+        # Copy the images to the session workspace
+        if logger:
+            logger.info("| Copying images to session workspace")
+        copied_image = comparator.copy_document_to_session_workspace()
     
-    return JSONResponse(content=({"session_id": comparator.session_id, "result": comparision_result_url}))
+        # Process the images and highlight differences
+        if logger:
+            logger.info("| Processing images for differences")
+        compare_image_result = comparator.process_image()
+    
+        # Generate the result HTML with the comparison
+        if logger:
+            logger.info("| Generating Result HTML for Image document")
+        session_path = os.path.join(IMAGE_WORKSPACE, comparator.session_id)
+        generate_html = HtmlGenerator(comparator)
+        result = generate_html.generate_result_html(
+            session_path,
+            copied_image[0]['file1']['file1_name'],
+            copied_image[1]['file2']['file2_name'],
+            copied_image[0]['file1']['file1_version'], 
+            copied_image[1]['file2']['file2_version'],
+            compare_image_result['file_1'], 
+            compare_image_result['file_2']
+            )
+
+        # Clean up the session workspace
+        if logger:
+            logger.info("| Cleaning up session workspace")
+        shutil.rmtree(session_path)
+
+        # Return the result URL
+        if logger:
+            logger.info(f"| Result URL: {result}")    
+        return JSONResponse(content=({"session_id": comparator.session_id, "result": result}))
+    except Exception as e:
+        if logger:
+            logger.error(f"| Unexpected error during PDF comparison: {e}")
+        raise HTTPException(status_code=500, detail="Unexpected error during Image comparison")

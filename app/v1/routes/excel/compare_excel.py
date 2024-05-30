@@ -5,15 +5,18 @@ from pydantic import BaseModel
 from urllib.parse import unquote
 from jinja2 import Template
 import pandas as pd
+import configparser
 import shutil
 from app.log_mgmt.docom_log_config import DOCCOMLogging
 from time import sleep
 
+# Initialize FastAPI router
 router = APIRouter()
-EXCEL_WORKSPACE = os.path.abspath(os.path.join("app", "v1", "static", "excel"))
-BASE_URL = "http://localhost:8030/"
-logger = DOCCOMLogging().configure_logger()
 
+# Set the workspace directory for storing excel documents
+EXCEL_WORKSPACE = os.path.abspath(os.path.join("app", "v1", "static", "excel"))
+
+# Pydantic model for excel file request
 class ExcelFileRequest(BaseModel):
     file1_path: str
     file1_sheet_name: str
@@ -29,147 +32,177 @@ class ExcelFileRequest(BaseModel):
     wm_opacity: str
     wm_rotation: str
 
-
+# Class for excel document comparison
 class ExcelDocumentComparator:
-    def __init__(self, file_paths) -> None:
+    def __init__(self, file_paths: ExcelFileRequest, logger: DOCCOMLogging) -> None:
+        # Decode and initialize file paths and session ID
         """First Document"""
-        self.file_1_path = unquote(r'' + file_paths.file1_path)
-        self.file_1_name = os.path.basename(self.file_1_path)
-        self.file_1_version = self.file_1_path.split('\\')[-2]
-        self.file1_sheet_name = file_paths.file1_sheet_name
-        if not self.file1_sheet_name:
-            self.file1_sheet_name = "Sheet1"
+        self.file1_path = unquote(r'' + file_paths.file1_path)
+        self.file1_name = os.path.basename(self.file1_path)
+        self.file1_version = self.file1_path.split('\\')[-2]
+        self.file1_sheetname = file_paths.file1_sheet_name or "Sheet1"
         
         """Second Document"""
-        self.file_2_path = unquote(r'' + file_paths.file2_path)
-        self.file_2_name = os.path.basename(self.file_2_path)
-        self.file_2_version = self.file_2_path.split('\\')[-2]
-        self.file2_sheet_name = file_paths.file2_sheet_name
-        if not self.file2_sheet_name:
-            self.file2_sheet_name = "Sheet1"
-
+        self.file2_path = unquote(r'' + file_paths.file2_path)
+        self.file2_name = os.path.basename(self.file2_path)
+        self.file2_version = self.file2_path.split('\\')[-2]
+        self.file2_sheetname = file_paths.file2_sheet_name or "Sheet1"
+        
+        self.logger = logger
         self.session_id = file_paths.session_id
     
     def validate_excel_document(self):
-        """Check if the document exists"""
-        if not os.path.isfile(self.file_1_path.replace("%20", " ")):
-            logger.error(f"| {self.file_1_path} not found")
-            raise HTTPException(status_code=404, detail=f"{self.file_1_path} not found.")
-        if not os.path.isfile(self.file_2_path.replace("%20", " ")):
-            logger.error(f"| {self.file_2_path} not found")
-            raise HTTPException(status_code=404, detail=f"{self.file_2_path} not found.")
+        # Validate existence of Excel documents and sheets.
+        for file_path, sheet_name in [(self.file1_path, self.file1_sheetname), (self.file2_path, self.file2_sheetname)]:
+            # Check if Excel document exists
+            if not os.path.isfile(file_path.replace("%20", " ")):
+                if self.logger:
+                    self.logger.error(f"| {file_path} not found")
+                raise HTTPException(status_code=404, detail=f"{file_path} not found.")
         
-        """Check if the sheet name exists"""
-        with pd.ExcelFile(self.file_1_path) as xls_file1:
-            if not self.file1_sheet_name in xls_file1.sheet_names:
-                logger.error(f"| Sheet name {self.file1_sheet_name} not found in {self.file_1_path}")
-                raise HTTPException(status_code=400, detail=f"Sheet name {self.file1_sheet_name} not found in {self.file_1_path}")
+            # Check if the sheet name exists"""
+            with pd.ExcelFile(file_path) as xls_file1:
+                if sheet_name not in xls_file1.sheet_names:
+                    if self.logger:
+                        self.logger.error(f"| Sheet name {sheet_name} not found in {file_path}")
+                    raise HTTPException(status_code=400, detail=f"Sheet name {sheet_name} not found in {file_path}")
         
-        with pd.ExcelFile(self.file_2_path) as xls_file2:
-            if not self.file2_sheet_name in xls_file2.sheet_names:
-                logger.error(f"| Sheet name {self.file2_sheet_name} not found in {self.file_2_path}")
-                raise HTTPException(status_code=400, detail=f"Sheet name {self.file2_sheet_name} not found in {self.file_2_path}")
-
-        """Check if the sheet is empty"""
-        file1_sheet = pd.read_excel(self.file_1_path, self.file1_sheet_name)
-        if file1_sheet.empty:
-            logger.error(f"| Sheet name {self.file1_sheet_name} in {self.file_1_path} is empty")
-            raise HTTPException(status_code=400, detail=f"Sheet name {self.file1_sheet_name} in {self.file_1_path} is empty")
-        
-        file2_sheet = pd.read_excel(self.file_2_path, self.file2_sheet_name)
-        if file2_sheet.empty:
-            logger.error(f"| Sheet name {self.file2_sheet_name} in {self.file_2_path} is empty")
-            raise HTTPException(status_code=400, detail=f"Sheet name {self.file2_sheet_name} in {self.file_2_path} is empty")
+            # Check if the sheet is empty"""
+            sheet = pd.read_excel(file_path, sheet_name)
+            if sheet.empty:
+                if self.logger:
+                    self.logger.error(f"| Sheet name {sheet_name} in {file_path} is empty")
+                raise HTTPException(status_code=400, detail=f"Sheet name {sheet_name} in {file_path} is empty")
 
     def create_workspace(self):
+        # Create workspace directory for the session if it doesn't exist
         session_folder = os.path.join(EXCEL_WORKSPACE, self.session_id)
         if os.path.exists(session_folder):
             shutil.rmtree(session_folder,ignore_errors=True)
             os.makedirs(session_folder,exist_ok=True)
         os.makedirs(session_folder, exist_ok=True)
+        if self.logger:
+            self.logger.info(f"| Workspace created for session: {self.session_id}")
             
     def process_document(self) -> dict:
         try:
-            """Panda: Create DataFrame object"""
-            df1 = pd.read_excel(self.file_1_path, sheet_name=self.file1_sheet_name, header=None)
-            df2 = pd.read_excel(self.file_2_path, sheet_name=self.file2_sheet_name, header=None)
+            # Create DataFrame object
+            df1 = pd.read_excel(self.file1_path, sheet_name=self.file1_sheetname, header=None)
+            df2 = pd.read_excel(self.file2_path, sheet_name=self.file2_sheetname, header=None)
 
-            """
-                - Compare the number of rows
-                - Put '-' where there is missmatch
-                - Replace Nan with '-'
-            """
-            num_rows_df1 = len(df1)
-            num_rows_df2 = len(df2)
+            # Handle unequal rows
+            df1, df2 = self._handle_unequal_rows(df1, df2)
 
-            if num_rows_df1 > num_rows_df2:
-                diff = num_rows_df1 - num_rows_df2
-                nan_rows = pd.DataFrame([['-'] * len(df2.columns)] * diff, columns=df2.columns)
-                df2 = pd.concat([df2, nan_rows], ignore_index=True)
-            elif num_rows_df1 < num_rows_df2:
-                diff = num_rows_df2 - num_rows_df1
-                nan_rows = pd.DataFrame([['-'] * len(df1.columns)] * diff, columns=df1.columns)
-                df1 = pd.concat([df1, nan_rows], ignore_index=True)
+            # Find common_headers_list, common_indices, differing_indices
+            common_headers_list, common_indices, differing_indices = self._find_differences(df1, df2)
 
-            df1 = df1.fillna('-')
-            df2 = df2.fillna('-')
-
-            """
-                - Get common headers between df1 and df2
-                - Compare df1 and df2 row-by-row
-                - Get the index values where df1 and df2 differs
-                - Get common indices between df1 and df2
-                - Filter df1 and df2 to include only common headers
-                - Get differ values
-            """
-            common_headers = df1.columns.intersection(df2.columns)
-            common_headers_list = list(common_headers)
-
-            comparison = df1.equals(df2)
-            if not comparison:
-                differing_indices = df1.index[df1.ne(df2).any(axis=1)].tolist()
-            else:
-                differing_indices = []
-        
-            common_indices = df1.index.intersection(df2.index)
-
-            df1_common = df1[common_headers]
-            df2_common = df2[common_headers]
-            common_indices = df1_common.index.intersection(df2_common.index)
-
-            different_values_df2 = []
-            # Iterate through columns of df2
-            for column_index, column in enumerate(df2.columns):
-                # Check if the column exists in both DataFrames
-                if column in df1.columns:
-                    # Iterate through common indices and compare corresponding values in df1 and df2
-                    for index in common_indices:
-                        # Check if the index exists in both DataFrames
-                        if index in df1.index and index in df2.index:
-                            # Check if the values differ
-                            if df2.loc[index, column] != df1.loc[index, column]:
-                                # Append (header_index, cell_index, column, value) to different_values_df2
-                                different_values_df2.append((index, column_index, column, df2.loc[index, column]))
-                else:
-                    # If the column exists only in df2, append (header_index, cell_index, column, value) to different_values_df2
-                    for index in df2.index:
-                        if index in df2.index:
-                            different_values_df2.append((index, column_index, column, df2.loc[index, column]))
-
+            # Find different values in df2
+            different_values_df2 = self._get_detailed_differences(df1, df2, common_indices)
+            
+            # Get the table data from the DataFrames
             table1 = df1.to_dict(orient='records')
             table2 = df2.to_dict(orient='records')
 
             return {"data1": table1, "data2": table2, "common_headers_list": common_headers_list,
                 "differing_indices": differing_indices, "different_values_df2": different_values_df2}
         except Exception as e:
-            logger.error(f"| Excel document process failes: {e}")
-            return False
+            if self.logger:
+                self.logger.error(f"| Excel document process failes: {e}")
+            raise HTTPException(status_code=500, detail="Error processing Excel document")
+    
+    def _handle_unequal_rows(self, df1, df2) -> tuple:
+        """
+        Handles rows with unequal length between DataFrames.
+
+        Args:
+            df1: First Excel document DataFrame
+            df2: Second Excel document DataFrame
+
+        Returns:
+            tuple: A tuple containing the padded DataFrames (df1, df2)
+        """
+        len_df1 = len(df1)
+        len_df2 = len(df2)
+
+        if len_df1 > len_df2:
+            diff = len_df1 - len_df2
+            nan_rows = pd.DataFrame([['-'] * len(df2.columns)] * diff, columns=df2.columns)
+            df2 = pd.concat([df2, nan_rows], ignore_index=True)
+        elif len_df1 < len_df2:
+            diff = len_df2 - len_df1
+            nan_rows = pd.DataFrame([['-'] * len(df1.columns)] * diff, columns=df1.columns)
+            df1 = pd.concat([df1, nan_rows], ignore_index=True)
+
+        df1 = df1.fillna('-')
+        df2 = df2.fillna('-')
+        return (df1, df2)
+
+    def _find_differences(self, df1, df2) -> tuple:
+        """
+        Find common headers and differing row indices between DataFrames
+
+        Args:
+            df1: First Excel document DataFrame
+            df2: Second Excel document DataFrame
+        
+        Returns:
+            tuple: A tuple containing the common headers and differing row indices
+        """
+        common_headers = df1.columns.intersection(df2.columns)
+        common_headers_list = list(common_headers)
+
+        comparison = df1.equals(df2)
+        if not comparison:
+            differing_indices = df1.index[df1.ne(df2).any(axis=1)].tolist()
+        else:
+            differing_indices = []
+        
+        common_indices = df1.index.intersection(df2.index)
+
+        df1_common = df1[common_headers]
+        df2_common = df2[common_headers]
+        common_indices = df1_common.index.intersection(df2_common.index)
+
+        return (common_headers_list, common_indices, differing_indices)
+
+    def _get_detailed_differences(self, df1, df2, common_indices) -> list:
+        """
+        Extracts detailed information about differences in the second DataFrame.
+
+        Args:
+            df1: First Excel document DataFrame
+            df2: Second Excel document DataFrame
+            common_headers: Common headers between the two DataFrames
+
+        Returns:
+            list: A list containing detailed information about differences in df2.
+        """
+        different_values_df2 = []
+        # Iterate through columns of df2
+        for column_index, column in enumerate(df2.columns):
+            # Check if the column exists in both DataFrames
+            if column in df1.columns:
+                # Iterate through common indices and compare corresponding values in df1 and df2
+                for index in common_indices:
+                    # Check if the index exists in both DataFrames
+                    if index in df1.index and index in df2.index:
+                        # Check if the values differ
+                        if df2.loc[index, column] != df1.loc[index, column]:
+                            # Append (header_index, cell_index, column, value) to different_values_df2
+                            different_values_df2.append((index, column_index, column, df2.loc[index, column]))
+            else:
+                # If the column exists only in df2, append (header_index, cell_index, column, value) to different_values_df2
+                for index in df2.index:
+                    if index in df2.index:
+                        different_values_df2.append((index, column_index, column, df2.loc[index, column]))
+        return different_values_df2
 
 class HtmlGenerator:
     def __init__(self, comparator_instance) -> None:
         self.comparator_instance = comparator_instance
 
     def generate_result_html(self, session_path, data1, data2, title, file1, file2, file1_sheet_name, file2_sheet_name, file_1_version, file_2_version, differing_indices, different_values_df2):
+        # HTML template for comparison result
         html_template_str = '''<!DOCTYPE html>
         <html>
             <head>
@@ -454,9 +487,8 @@ class HtmlGenerator:
             <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.0.2/dist/js/bootstrap.bundle.min.js" integrity="sha384-MrcW6ZMFYlzcLA8Nl+NtUVF0sA7MsXsP1UyJoMp4YLEuNSfAP+JcXn/tWtIaxVXM" crossorigin="anonymous"></script>
         </body>
         </html>'''
-
-        """Render HTML Template"""
         try:
+            # Render the HTML template with the provided data
             template = Template(html_template_str)
             render_html = template.render(
                 title = title,
@@ -472,6 +504,7 @@ class HtmlGenerator:
                 different_values_df2 = different_values_df2
             )
 
+            # Save the rendered HTML to a file
             html_file_path = f"{session_path}/comparison_result.html"
             if os.path.exists(html_file_path):
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
@@ -479,60 +512,87 @@ class HtmlGenerator:
             else:
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
                     html_file.write(render_html)
+
+            # Pause to ensure file operations are complete
             sleep(5)
             
-            """Copy the HTML to CVWeb"""
-            destination_path_list = self.comparator_instance.file_1_path.split('\\')
-            destination_path_List = self.comparator_instance.file_1_path.split('\\')[:-2]
+            
+            # Copy the HTML file to the CVWeb destination path
+            destination_path_list = self.comparator_instance.file1_path.split('\\')
+            destination_path_List = self.comparator_instance.file1_path.split('\\')[:-2]
             destination_path = '\\'.join(destination_path_List)
             shutil.copy(html_file_path, destination_path)
             cvweb_index = destination_path_list.index('CVWeb')
             cvweb_string = '//'.join(destination_path_list[cvweb_index:-2])
             sleep(2)
 
-            """Cleanup session Workspace"""
+            # Clean up the session workspace
+            if self.comparator_instance.logger:
+                self.comparator_instance.logger.info("| Cleaning up session workspace")
             SESSION_PATH = os.path.join(EXCEL_WORKSPACE, self.comparator_instance.session_id)
             shutil.rmtree(SESSION_PATH)
 
             return cvweb_string+"//comparison_result.html"
         except Exception as e:
-            logger.error(f"| Generating result HTML failed: {e}")
-            return False
+            if self.comparator_instance.logger:
+                self.comparator_instance.logger.error(f"| Generating result HTML failed: {e}")
+            raise HTTPException(status_code=500, detail="Error generating result HTML")
 
+# FastAPI route for comparing excel documents and generating the comparison URL   
 @router.post("/compare_excel")
 def generate_url(file_paths: ExcelFileRequest):
-    logger.info("| POST request to Excel Document Comparision")
-    comparator = ExcelDocumentComparator(file_paths)
+    # Read configuration from the configuration file
+    config = configparser.ConfigParser(allow_no_value=True)
+    configuration_file_path = os.path.abspath(os.path.join("config","configuration.ini"))
+    config.read(rf"{configuration_file_path}")
+    logging_enabled = config.get('Logging', 'logging_enabled')
     
-    """Validate Document"""
-    logger.info("| Validating Excel Documents")
+    # Configure the logger if logging is enabled
+    if logging_enabled == "on":
+        logger = DOCCOMLogging().configure_logger()
+    else:
+        # Set logger to None if logging is disabled
+        logger = None
+
+    if logger:
+        logger.info("| Received request for excel document comparison")
+    comparator = ExcelDocumentComparator(file_paths, logger)
+    
+    # Validate the provided documents
+    if logger:
+        logger.info("| Validating Excel Documents")
     comparator.validate_excel_document()
 
-    """Create Session workspace"""
-    logger.info("| Creating workspace for Excel document comparison")
+    # Create a workspace for the session
+    if logger:
+        logger.info("| Creating workspace for session")
     comparator.create_workspace()
 
-    """Process Document"""
-    logger.info("| Start processing Excel document")
+    # Process the excel documents and highlight differences
+    if logger:
+        logger.info("| Start processing Excel document")
     comparision_response = comparator.process_document()
-    if not comparision_response:
-        raise HTTPException(status_code=422, detail=f"Error processing Excel documents")
-
     
-    """Generate HTML"""
-    logger.info("| Generating Result HTML for Excel document")
-    SESSION_PATH = os.path.join(EXCEL_WORKSPACE, comparator.session_id)
+    # Generate the result HTML with the comparison
+    if logger:
+        logger.info("| Generating Result HTML for Excel document")
+    session_path = os.path.join(EXCEL_WORKSPACE, comparator.session_id)
     generate_html = HtmlGenerator(comparator)
-    result = generate_html.generate_result_html(SESSION_PATH, 
-                                comparision_response['data1'], comparision_response['data2'], "Contentverse Excel Document Comparison",
-                                comparator.file_1_name, comparator.file_2_name, comparator.file1_sheet_name,
-                                comparator.file2_sheet_name, comparator.file_1_version,
-                                comparator.file_2_version, comparision_response['differing_indices'], 
-                                comparision_response['different_values_df2'])
+    result = generate_html.generate_result_html(
+        session_path, 
+        comparision_response['data1'], 
+        comparision_response['data2'], 
+        "Contentverse Excel Document Comparison",
+        comparator.file1_name, 
+        comparator.file2_name, 
+        comparator.file1_sheetname,
+        comparator.file2_sheetname, 
+        comparator.file1_version,
+        comparator.file2_version, 
+        comparision_response['differing_indices'], 
+        comparision_response['different_values_df2'])
     
-    if not result:
-        raise HTTPException(status_code=422, detail=f"Error generating HTML")
-    comparision_result_url = f"{result}"
-    logger.info(f"| Result URL: {comparision_result_url}")
-    return JSONResponse(content={"session_id": comparator.session_id, "result": comparision_result_url})
+    if logger:
+        logger.info(f"| Result URL: {result}")
+    return JSONResponse(content={"session_id": comparator.session_id, "result": result})
         

@@ -1,29 +1,34 @@
 import os
 import cv2
-import fitz
+import fitz # PyMuPDF
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 from urllib.parse import unquote
 from jinja2 import Template
+import configparser
 import shutil
 from fastapi.staticfiles import StaticFiles
 from app.log_mgmt.docom_log_config import DOCCOMLogging
 from PIL import Image
 import time
 
+# Initialize FastAPI router
 router = APIRouter()
-logger = DOCCOMLogging().configure_logger()
+
+# Set the workspace directory for storing PDF
 PDF_WORKSPACE = os.path.abspath(os.path.join("app", "v1", "static", "pdf"))
 
+# Pydantic model for image file request
 class PDFFileRequest(BaseModel):
     file1_path: str
     file2_path: str
     session_id: str
 
+# Class for PDF document comparison
 class PDFDocumentComparator:
-    def __init__(self, file_paths) -> None:
-
+    def __init__(self, file_paths: PDFFileRequest, logger: DOCCOMLogging) -> None:
+        # Decode and initialize file paths and session ID
         """First PDF"""
         self.file_1_path = unquote(r'' + file_paths.file1_path)
         self.file_1_name = os.path.basename(self.file_1_path)
@@ -34,59 +39,70 @@ class PDFDocumentComparator:
         self.file_2_name = os.path.basename(self.file_2_path)
         self.file_2_version = self.file_2_path.split('\\')[-2]
 
+        self.logger = logger
         self.session_id = file_paths.session_id
     
     def create_workspace(self):
+        # Create workspace directory for the session if it doesn't exist
         session_folder = os.path.join(PDF_WORKSPACE, self.session_id)
-        if not os.path.exists(session_folder):
-            os.makedirs(session_folder)
-    
+        os.makedirs(session_folder, exist_ok=True)
+        if self.logger:
+            self.logger.info(f"| Workspace created for session: {self.session_id}")
+
     def count_pdf_pages(self, pdf_file: str) -> int:
         try:
-            # Open PDF
+            # Open PDF and count the number of pages
             pdf_document = fitz.open(pdf_file)
-            # Get the number of pages in the PDF
             num_pages = pdf_document.page_count
             pdf_document.close()
             return num_pages
         except Exception as e:
+            if self.logger:
+                self.logger.error(f"Error counting pages in PDF {pdf_file}: {e}")
             return 0
         
     def copy_document_to_session_workspace(self):
         try:
-            SESSION_PATH = os.path.join(PDF_WORKSPACE, self.session_id)
-            FILE_1_WORKSPACE = os.path.join(SESSION_PATH, self.file_1_version)
-            FILE_2_WORKSPACE = os.path.join(SESSION_PATH, self.file_2_version)
+            # Define session and version-specific paths
+            session_path = os.path.join(PDF_WORKSPACE, self.session_id)
+            file_1_workspace = os.path.join(session_path, self.file_1_version)
+            file_2_workspace = os.path.join(session_path, self.file_2_version)
             
-            # Create directories
-            os.makedirs(FILE_1_WORKSPACE, exist_ok=True)
-            os.makedirs(FILE_2_WORKSPACE, exist_ok=True)
+            # Create directories for PDF versions
+            os.makedirs(file_1_workspace, exist_ok=True)
+            os.makedirs(file_2_workspace, exist_ok=True)
 
-            # Copy files
-            shutil.copy(self.file_1_path, FILE_1_WORKSPACE)
-            shutil.copy(self.file_2_path, FILE_2_WORKSPACE)
+            # Copy PDF files to their respective directories
+            shutil.copy(self.file_1_path, file_1_workspace)
+            shutil.copy(self.file_2_path, file_2_workspace)
 
+            if self.logger:
+                self.logger.info("| Copied PDFs to session workspace")
+
+            # Short delay to ensure file copy completion
             time.sleep(0.5)
-            # Get PDF info
+
+            # Return file properties including path and number of pages
             return {
                 "file_1_property": {
                     "file1_name": self.file_1_name,
                     "file1_version": self.file_1_version,
-                    "file1_session_path": f"{FILE_1_WORKSPACE}",
-                    "file1_path": f"{FILE_1_WORKSPACE}\\{self.file_1_name}",
-                    "number_of_pages": self.count_pdf_pages(f"{FILE_1_WORKSPACE}\\{self.file_1_name}")
+                    "file1_session_path": f"{file_1_workspace}",
+                    "file1_path": f"{file_1_workspace}\\{self.file_1_name}",
+                    "number_of_pages": self.count_pdf_pages(f"{file_1_workspace}\\{self.file_1_name}")
                 },
                 "file_2_property": {
                     "file2_name": self.file_2_name,
                     "file2_version": self.file_2_version,
-                    "file2_session_path": f"{FILE_2_WORKSPACE}",
-                    "file2_path": f"{FILE_2_WORKSPACE}\\{self.file_2_name}",
-                    "number_of_pages": self.count_pdf_pages(f"{FILE_2_WORKSPACE}\\{self.file_2_name}")
+                    "file2_session_path": f"{file_2_workspace}",
+                    "file2_path": f"{file_2_workspace}\\{self.file_2_name}",
+                    "number_of_pages": self.count_pdf_pages(f"{file_2_workspace}\\{self.file_2_name}")
                 }
             }
         except Exception as e:
-            logger.error(f"| Copying pdfs to workspace: {e}")
-            return False
+            if self.logger:
+                self.logger.error(f"| Copying pdfs to workspace: {e}")
+            raise HTTPException(status_code=500, detail="Error copying PDFs to session workspace")
 
     def split_convert_pdf_to_jpg(self, pdf_file_path: str, output_path: str ):
         try:
@@ -106,18 +122,21 @@ class PDFDocumentComparator:
 
                 # Save the image
                 image_path = f"{output_path}\\page_{page_number + 1}.jpg"
-                img.save(image_path,dpi=(500,500))
+                img.save(image_path,dpi=(300,300))
                 converted_image_path_list.append(image_path)
                 time.sleep(0.5)
             # Close the PDF file
             pdf_document.close()
             return converted_image_path_list
         except Exception as e:
-            logger.error(f"| Spliting and converting PDF: {e}")
-            return False
+            if self.logger:
+                self.logger.error(f"| Spliting and converting PDF: {e}")
+            raise HTTPException(status_code=400, detail="Error converting PDFs to images")
 
     def compare_pdf_image(self, file1: list, file2: list):
         try:
+            if self.logger:
+                self.logger.info(f"| Comparing pdf images")
             # Extract filenames from each path in l1 and l2
             file1_filenames = [os.path.basename(path) for path in file1]
             file2_filenames = [os.path.basename(path) for path in file2]
@@ -152,11 +171,13 @@ class PDFDocumentComparator:
                     cv2.imwrite(file2[file2_index], image2)
                     time.sleep(0.5)
                 else:
-                    logger.error(f"| {file1_filename} not found in {file2_filenames}")
+                    if self.logger:
+                        self.logger.error(f"| {file1_filename} not found in {file2_filenames}")
             return True
         except Exception as e:
-            logger.error(f"| Extracting filenames: {e}")
-            return False
+            if self.logger:
+                self.logger.error(f"| Error comparing PDF: {e}")
+            raise HTTPException(status_code=500, detail="Error comparing PDF")
 
 class HtmlGenerator:
     def __init__(self, comparator_instance) -> None:
@@ -273,7 +294,7 @@ class HtmlGenerator:
                                             <div class="table-container">
                                                 <div class="table table-responsive">
                                                     <!-- Load Images -->
-                                                    <img src={{i}} class="img-fluid" alt="{{file1}}" style="height: 100vh; background-size: cover;">
+                                                    <img src={{i}} class="img-fluid" alt="{{file1}}" style="height: 100%; width:100%; background-size: cover;">
                                                 </div>
                                             </div>
                                         </div>
@@ -292,7 +313,7 @@ class HtmlGenerator:
                                         <div class="table-container">
                                             <div class="table table-responsive">
                                                 <!--Load Images-->
-                                                <img src={{i}} class="img-fluid" alt="{{file2}}" style="height: 100vh; background-size: cover;">
+                                                <img src={{i}} class="img-fluid" alt="{{file2}}" style="height: 100%; width:100%; background-size: cover;">
                                             </div>
                                         </div>
                                     </div>
@@ -307,8 +328,8 @@ class HtmlGenerator:
             </body>
         </html>'''
 
-        """Render HTML Template"""
         try:
+            # Render the HTML template with the provided data
             template = Template(html_template_str)
             render_html = template.render(
                 file1 = file1,
@@ -319,6 +340,7 @@ class HtmlGenerator:
                 pdf2_image_list = pdf2_image_list
             )
 
+            # Save the rendered HTML to a file
             html_file_path = f"{session_path}/comparison_result.html"
             if os.path.exists(html_file_path):
                 os.remove(html_file_path)
@@ -327,9 +349,11 @@ class HtmlGenerator:
             else:
                 with open(f"{session_path}/comparison_result.html", "w") as html_file:
                     html_file.write(render_html)
-        
+
+            # Pause to ensure file operations are complete
             time.sleep(5)
-            """Copy the HTML to CVWeb"""
+
+            # Copy the HTML file to the CVWeb destination path
             destination_path_list = self.comparator_instance.file_1_path.split('\\')
             destination_path_List = self.comparator_instance.file_1_path.split('\\')[:-2]
             destination_path = '\\'.join(destination_path_List)
@@ -338,68 +362,86 @@ class HtmlGenerator:
             cvweb_string = '//'.join(destination_path_list[cvweb_index:-2])
             return cvweb_string+"//comparison_result.html"
         except Exception as e:
-            logger.error(f"| Generating result HTML failed: {e}")
-            return False
-
+            if self.comparator_instance.logger:
+                self.comparator_instance.logger.error(f"| Generating result HTML failed: {e}")
+            raise HTTPException(status_code=500, detail="Error generating result HTML")
+            
 @router.post("/compare_pdf")
 def generate_url(file_paths: PDFFileRequest):
+    try:
+        # Read configuration from the configuration file
+        config = configparser.ConfigParser(allow_no_value=True)
+        configuration_file_path = os.path.abspath(os.path.join("config","configuration.ini"))
+        config.read(rf"{configuration_file_path}")
+        logging_enabled = config.get('Logging', 'logging_enabled')
     
-    logger.info("| POST request to PDF Document Comparison")
-    comparator = PDFDocumentComparator(file_paths)
+        # Configure the logger if logging is enabled
+        if logging_enabled == "on":
+            logger = DOCCOMLogging().configure_logger()
+        else:
+            # Set logger to None if logging is disabled
+            logger = None
 
-    """Create Session Workspace"""
-    logger.info("| Creating workspace for Image document comparison")
-    comparator.create_workspace()
+        if logger:
+            logger.info("| Received request for pdf document comparison")
+        # Initialize the comparator
+        comparator_instance = PDFDocumentComparator(file_paths, logger)
 
-    """Copy images to session workspace"""
-    logger.info("| Copying image to session workspace")
-    copied_image_info = comparator.copy_document_to_session_workspace()
-    if not copied_image_info:
-        raise HTTPException(status_code=422, detail=f"Error while copying image")
+        # Create a workspace for the session
+        if logger:
+            logger.info("| Creating workspace for session")
+        comparator_instance.create_workspace()
 
-    """Split, Convert PDF to JPEG"""
-    # PDF 1
-    split_pdf_1 = comparator.split_convert_pdf_to_jpg(copied_image_info['file_1_property']['file1_path'], copied_image_info['file_1_property']['file1_session_path'])
-    # PDF 2
-    split_pdf_2 = comparator.split_convert_pdf_to_jpg(copied_image_info['file_2_property']['file2_path'], copied_image_info['file_2_property']['file2_session_path'])
-
-
-    comparision_result_url = comparator.compare_pdf_image(split_pdf_1, split_pdf_2)
+        # Copy PDFs to the session workspace
+        if logger:
+            logger.info("| Copying pdf to session workspace")
+        copied_pdf_info = comparator_instance.copy_document_to_session_workspace()
     
-    """Generate HTML"""
-    logger.info("| Generating Result HTML for Image document")
-    SESSION_PATH = os.path.join(PDF_WORKSPACE, comparator.session_id)
-    pdf1_image_list = [f"{copied_image_info['file_1_property']['file1_version']}\\page_{i}.jpg" for i in range(1, copied_image_info['file_1_property']['number_of_pages'] + 1)]
-    pdf2_image_list = [f"{copied_image_info['file_2_property']['file2_version']}\\page_{i}.jpg" for i in range(1, copied_image_info['file_2_property']['number_of_pages'] + 1)]
-    generate_html = HtmlGenerator(comparator)
+        # Convert PDFs to Images
+        if logger:
+            logger.info(f"| Spliting and converting PDF to JPG")
+        split_pdf_1 = comparator_instance.split_convert_pdf_to_jpg(copied_pdf_info['file_1_property']['file1_path'], copied_pdf_info['file_1_property']['file1_session_path'])
+        split_pdf_2 = comparator_instance.split_convert_pdf_to_jpg(copied_pdf_info['file_2_property']['file2_path'], copied_pdf_info['file_2_property']['file2_session_path'])
+
+        # Compare images and highlight differences
+        comparator_instance.compare_pdf_image(split_pdf_1, split_pdf_2)
     
-    result = generate_html.generate_result_html(SESSION_PATH,
-                                                copied_image_info["file_1_property"]["file1_name"], copied_image_info["file_2_property"]["file2_name"],
-                                                 copied_image_info["file_1_property"]["file1_version"], copied_image_info["file_2_property"]["file2_version"],
-                                                  pdf1_image_list, pdf2_image_list )
+        # Generate HTML to display comparison results
+        if logger:
+            logger.info("| Generating Result HTML for PDF document")
+        session_path = os.path.join(PDF_WORKSPACE, comparator_instance.session_id)
+        pdf1_image_list = [f"{copied_pdf_info['file_1_property']['file1_version']}\\page_{i}.jpg" for i in range(1, copied_pdf_info['file_1_property']['number_of_pages'] + 1)]
+        pdf2_image_list = [f"{copied_pdf_info['file_2_property']['file2_version']}\\page_{i}.jpg" for i in range(1, copied_pdf_info['file_2_property']['number_of_pages'] + 1)]
+        generate_html = HtmlGenerator(comparator_instance)
+    
+        result = generate_html.generate_result_html(
+            session_path,
+            copied_pdf_info["file_1_property"]["file1_name"], 
+            copied_pdf_info["file_2_property"]["file2_name"],
+            copied_pdf_info["file_1_property"]["file1_version"], 
+            copied_pdf_info["file_2_property"]["file2_version"],
+            pdf1_image_list, pdf2_image_list )
 
-    if not result:
-        raise HTTPException(status_code=422, detail=f"Error generating HTML")
-    comparision_result_url = f"{result}"
+        # Copy the images to user session workspace
+        file1_path = "\\".join(comparator_instance.file_1_path.split('\\')[:-1])+"\\"
+        for i in range(1, copied_pdf_info['file_1_property']['number_of_pages'] + 1):
+            shutil.copy(f"{session_path}\\{copied_pdf_info['file_1_property']['file1_version']}\\page_{i}.jpg", file1_path)
+            time.sleep(0.5)
+        file2_path = "\\".join(comparator_instance.file_2_path.split('\\')[:-1])+"\\"
+        for i in range(1, copied_pdf_info['file_2_property']['number_of_pages'] + 1):
+            shutil.copy(f"{session_path}\\{copied_pdf_info['file_2_property']['file2_version']}\\page_{i}.jpg", file2_path)
+            time.sleep(0.5)
 
-    """Copy Images to user session"""
-    # PDF1 Images
-    file1_path = "\\".join(comparator.file_1_path.split('\\')[:-1])+"\\"
-    for i in range(1, copied_image_info['file_1_property']['number_of_pages'] + 1):
-        shutil.copy(f"{SESSION_PATH}\\{copied_image_info['file_1_property']['file1_version']}\\page_{i}.jpg", file1_path)
-        time.sleep(0.5)
-    # PDF2 Images
-    file2_path = "\\".join(comparator.file_2_path.split('\\')[:-1])+"\\"
-    for i in range(1, copied_image_info['file_2_property']['number_of_pages'] + 1):
-        shutil.copy(f"{SESSION_PATH}\\{copied_image_info['file_2_property']['file2_version']}\\page_{i}.jpg", file2_path)
-        time.sleep(0.5)
+        # Clean up the session workspace
+        if logger:
+            logger.info("| Cleaning up session workspace")
+        shutil.rmtree(session_path)
 
-    """Cleanup session Workspace"""
-    SESSION_PATH = os.path.join(PDF_WORKSPACE, comparator.session_id)
-    shutil.rmtree(SESSION_PATH)
-    logger.info("| Session Workspace Cleanup")
-    logger.info("| PDF Document Comparison Completed")
-    logger.info(f"| Session ID: {comparator.session_id}")
-    logger.info(f"| Comparision Result URL: {comparision_result_url}")
-    """Compare PDF images"""
-    return JSONResponse(content={"session_id": comparator.session_id, "result": comparision_result_url})
+        # Return the result URL
+        if logger:
+            logger.info(f"| Result URL: {result}")
+        return JSONResponse(content={"session_id": comparator_instance.session_id, "result": result})
+    except Exception as e:
+        if logger:
+            logger.error(f"| Unexpected error during PDF comparison: {e}")
+        raise HTTPException(status_code=500, detail="Unexpected error during PDF comparison")
