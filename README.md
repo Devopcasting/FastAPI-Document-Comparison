@@ -4,7 +4,7 @@ This project provides a FastAPI-based solution for comparing documents, supporti
 
 ## Developer
 
-- **Name**: Prashant Pokhriyal
+- Prashant Pokhriyal
 
 ## Features
 
