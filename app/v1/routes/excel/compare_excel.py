@@ -40,13 +40,23 @@ class ExcelDocumentComparator:
         self.file1_path = unquote(r'' + file_paths.file1_path)
         self.file1_name = os.path.basename(self.file1_path)
         self.file1_version = self.file1_path.split('\\')[-2]
-        self.file1_sheetname = file_paths.file1_sheet_name or "Sheet1"
+        # Check if sheetname is passed
+        if file_paths.file1_sheet_name:
+            self.file1_sheetname = file_paths.file1_sheet_name
+        else:
+            # Find the first sheet name
+            self.file1_sheetname = pd.ExcelFile(self.file1_path).sheet_names[0]
         
         """Second Document"""
         self.file2_path = unquote(r'' + file_paths.file2_path)
         self.file2_name = os.path.basename(self.file2_path)
         self.file2_version = self.file2_path.split('\\')[-2]
-        self.file2_sheetname = file_paths.file2_sheet_name or "Sheet1"
+        # Check if sheetname is passed
+        if file_paths.file2_sheet_name:
+            self.file2_sheetname = file_paths.file2_sheet_name
+        else:
+            # Find the first sheet name
+            self.file2_sheetname = pd.ExcelFile(self.file2_path).sheet_names[0]
         
         self.logger = logger
         self.session_id = file_paths.session_id
