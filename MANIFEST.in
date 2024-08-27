@@ -1,0 +1,7 @@
+# Exclude Python cache files
+exclude **/__pycache__/*
+exclude *.pyc
+exclude env
+exclude .git
+exclude .gitignore
+exclude *.log

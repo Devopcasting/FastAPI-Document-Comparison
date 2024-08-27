@@ -1,3 +1,5 @@
+# app/v1/routes/pdf/compare_pdf.py
+
 import os
 import cv2
 import fitz # PyMuPDF

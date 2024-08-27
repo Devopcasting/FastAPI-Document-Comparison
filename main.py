@@ -1,3 +1,5 @@
+# main.py
+
 # Import the necessary modules
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -75,11 +77,14 @@ def register_routers(app: FastAPI, api_version: str):
 # Create the FastAPI application instance
 app = create_app()
 
-# Entry point for running the FastAPI application
-if __name__ == '__main__':
+def main():
     # Determine the number of worker processes based on the available CPU cores
     num_cores = multiprocessing.cpu_count()
     num_workers = 2 if num_cores <= 2 else num_cores * 2 + 1
 
     # Run the FastAPI application using Uvicorn
     uvicorn.run("main:app", host="0.0.0.0", port=8030, workers=num_workers)
+
+# Entry point for running the FastAPI application
+if __name__ == '__main__':
+    main()
